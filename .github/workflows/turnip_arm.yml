@@ -1,0 +1,161 @@
+name: turnip-release-armhf
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  branch_version: "24.3"
+
+jobs:
+  start_building_turnip:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Prepare environment
+      run: |
+        sudo sed -Ei 's/^# deb-src /deb-src /' /etc/apt/sources.list
+        sudo sed -i 's/^Types: deb$/Types: deb deb-src/g' /etc/apt/sources.list.d/*.sources
+        sudo apt update
+        sudo apt build-dep mesa -y
+    
+    - name: Set up Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y meson ninja-build patchelf unzip curl python3-pip flex bison zip git dpkg-dev debhelper
+    
+    - name: Install or Upgrade Meson
+      run: |
+        python3 -m pip install --upgrade pip
+        python3 -m pip install --upgrade meson
+
+    - name: Create Work Directory
+      run: |
+        mkdir -p turnip_workdir
+        cd turnip_workdir
+
+    - name: Download and Extract Android NDK
+      run: |
+        cd turnip_workdir
+        ndkver="android-ndk-r26c"
+        if [ ! -d "$ndkver" ]; then
+          curl -LO https://dl.google.com/android/repository/"$ndkver"-linux.zip
+          unzip "$ndkver"-linux.zip
+        fi
+
+    - name: Clone Mesa Source
+      run: |
+        cd turnip_workdir
+        git clone --depth=1 --branch ${{ env.branch_version }} https://gitlab.freedesktop.org/mesa/mesa.git
+        cd mesa
+        # Get and display version info
+        commit_short=$(git rev-parse --short HEAD)
+        commit=$(git rev-parse HEAD)
+        mesa_version=$(cat VERSION | xargs)
+        version=$(awk -F'COMPLETE VK_MAKE_API_VERSION(|)' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
+        major=$(echo $version | cut -d "," -f 2 | xargs)
+        minor=$(echo $version | cut -d "," -f 3 | xargs)
+        patch=$(awk -F'VK_HEADER_VERSION |\n#define' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
+        vulkan_version="$major.$minor.$patch"
+
+    - name: Clone and Apply Patches
+      run: |
+        cd $GITHUB_WORKSPACE/turnip_workdir
+        git clone https://github.com/MastaG/mesa-turnip-ppa.git mesa-turnip
+        cd mesa
+        for patch in $GITHUB_WORKSPACE/turnip_workdir/mesa-turnip/turnip-patches/*.patch; do
+          echo "Applying patch $patch"
+          git apply "$patch"
+        done
+        echo "All patches applied successfully."
+
+    - name: Build Mesa for Android (32-bit)
+      run: |
+        cd turnip_workdir/mesa
+        ndk="$PWD/../android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin"
+        if [ ! -f "$ndk/armv7a-linux-androideabi31-clang" ]; then
+          echo "Compiler not found at $ndk/armv7a-linux-androideabi31-clang" && exit 1
+        fi
+        cat <<EOF > "android-arm"
+        [binaries]
+        ar = '$ndk/llvm-ar'
+        c = ['ccache', '$ndk/armv7a-linux-androideabi31-clang']
+        cpp = ['ccache', '$ndk/armv7a-linux-androideabi31-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-static-libstdc++']
+        c_ld = 'lld'
+        cpp_ld = 'lld'
+        strip = '$ndk/arm-linux-androideabi-strip'
+        pkgconfig = ['env', 'PKG_CONFIG_LIBDIR=$PWD/pkgconfig', '/usr/bin/pkg-config']
+        [host_machine]
+        system = 'android'
+        cpu_family = 'arm'
+        cpu = 'armv7'
+        endian = 'little'
+        EOF
+        mkdir -p build-android-arm
+        meson setup build-android-arm --cross-file "$PWD/android-arm" \
+            -Dbuildtype=release -Dplatforms=android -Dplatform-sdk-version=31 \
+            -Dandroid-stub=true -Dgallium-drivers= -Dvulkan-drivers=freedreno \
+            -Dvulkan-beta=true -Dfreedreno-kmds=kgsl -Db_lto=true
+        ninja -C build-android-arm
+
+    - name: Patchelf to Match Soname and Package
+      run: |
+        cd turnip_workdir/mesa/build-android-arm/src/freedreno/vulkan
+        cp libvulkan_freedreno.so "$GITHUB_WORKSPACE/turnip_workdir"
+        cd "$GITHUB_WORKSPACE/turnip_workdir"
+        patchelf --set-soname vulkan.adreno.so libvulkan_freedreno.so
+        mv libvulkan_freedreno.so vulkan.ad07XX.so
+        mkdir -p turnip_${{ env.branch_version }}/usr/local/lib
+        cp vulkan.ad07XX.so turnip_${{ env.branch_version }}/usr/local/lib
+        mkdir -p turnip_${{ env.branch_version }}/DEBIAN
+        cat <<EOL > turnip_${{ env.branch_version }}/DEBIAN/control
+        Package: turnip
+        Version: ${{ env.branch_version }}
+        Architecture: armhf
+        Maintainer: sabamdarif
+        Depends: 
+        Description: Vulkan driver for Freedreno and Android (32-bit)
+        EOL
+        dpkg-deb --build turnip_${{ env.branch_version }}
+
+    - name: Create meta.json
+      run: |
+        date=$(date +'%b %d, %Y')
+        cat <<EOF >"turnip_workdir/meta.json"
+        {
+          "schemaVersion": 1,
+          "name": "Turnip - $date - $commit_short",
+          "description": "Compiled from Mesa, Commit $commit_short",
+          "author": "mesa",
+          "packageVersion": "1",
+          "vendor": "Mesa",
+          "driverVersion": "$mesa_version/vk$vulkan_version",
+          "minApi": 27,
+          "libraryName": "vulkan.ad07XX.so"
+        }
+        EOF
+        mkdir -p turnip_${{ env.branch_version }}/usr/share/turnip
+        cp turnip_workdir/meta.json turnip_${{ env.branch_version }}/usr/share/turnip/
+
+    - name: Upload a Build Artifact
+      uses: actions/upload-artifact@v4.4.3
+      with:
+        name: Upload meson and ninja logs for debugging
+        path: |
+          turnip_workdir/ninja_log
+          turnip_workdir/mesa/build-android-arm/meson-logs/meson-log.txt
+
+    - name: Upload To Releases
+      uses: softprops/action-gh-release@v2
+      with:
+        files: ${{ github.workspace }}/turnip_workdir/turnip_${{ env.branch_version }}.deb
+        token: ${{ secrets.GITHUB_TOKEN }}
+        name: turnip android armhf
+        tag_name: mesa_turnip_${{ env.branch_version }}_armhf
+        draft: false
+        prerelease: false
