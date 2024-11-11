@@ -1,4 +1,4 @@
-name: nightly-turnip-release
+name: turnip-release
 
 on:
   workflow_dispatch:
@@ -46,7 +46,16 @@ jobs:
         files: |
            turnip_workdir/${{ steps.versions.outputs.filename }}.zip
 
-    - name: Release "turnip" with patched
+    - name: Build .deb package for "turnip" with patched
+      if: ${{ contains(steps.versions.outputs.patched, 'true') }}
+      run: |
+        cd turnip_workdir
+        # Assuming a package building script exists or use dpkg-deb or another tool to build the deb
+        dpkg-buildpackage -us -uc -b
+        # Move the generated .deb file to a known location
+        mv ../*.deb ./turnip_workdir/${{ steps.versions.outputs.filename }}_patched.deb
+
+    - name: Release "turnip" with patched .deb
       if: ${{ contains(steps.versions.outputs.patched, 'true') }}
       uses: softprops/action-gh-release@v1
       with:
@@ -54,4 +63,4 @@ jobs:
         name: ${{ steps.versions.outputs.name }}
         tag_name: ${{ steps.versions.outputs.tag }}
         files: |
-           turnip_workdir/${{ steps.versions.outputs.filename }}_patched.zip
+          turnip_workdir/${{ steps.versions.outputs.filename }}_patched.deb
