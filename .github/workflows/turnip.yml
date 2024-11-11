@@ -60,7 +60,6 @@ jobs:
         patch=$(awk -F'VK_HEADER_VERSION |\n#define' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
         vulkan_version="$major.$minor.$patch"
 
-
     - name: Clone and Apply Patches
       run: |
           cd $GITHUB_WORKSPACE/turnip_workdir
@@ -121,8 +120,27 @@ jobs:
         EOL
         dpkg-deb --build turnip_module
 
+    - name: Create meta.json
+      run: |
+        date=$(date +'%b %d, %Y')
+        cat <<EOF >"turnip_workdir/meta.json"
+        {
+          "schemaVersion": 1,
+          "name": "Turnip - $date - $commit_short",
+          "description": "Compiled from Mesa, Commit $commit_short",
+          "author": "mesa",
+          "packageVersion": "1",
+          "vendor": "Mesa",
+          "driverVersion": "$mesa_version/vk$vulkan_version",
+          "minApi": 27,
+          "libraryName": "vulkan.ad07XX.so"
+        }
+        EOF
+        mkdir -p turnip_module/usr/share/turnip
+        cp turnip_workdir/meta.json turnip_module/usr/share/turnip/
+
     - name: Upload a Build Artifact
-      uses: actions/upload-artifact@v3.2.0  # Update to the correct version
+      uses: actions/upload-artifact@v4.4.3
       with:
         name: Upload meson and ninja logs for debugging
         path: |
@@ -136,21 +154,13 @@ jobs:
             echo "tag=$(cat turnip_workdir/tag)" >> "$GITHUB_OUTPUT"
             echo "filename=$(cat turnip_workdir/filename)" >> "$GITHUB_OUTPUT"
             echo "patched=$(cat turnip_workdir/patched)" >> "$GITHUB_OUTPUT"
-        
 
-    - name: Create Git Tag
-      run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-          git tag ${{ steps.versions.outputs.tag }}
-          git push origin ${{ steps.versions.outputs.tag }}
-  
     - name: Upload To Releases
       uses: softprops/action-gh-release@v2
       with:
             files: ${{ github.workspace }}/turnip_workdir/turnip_module.deb
             token: ${{ secrets.GITHUB_TOKEN }}
             name: turnip android
-            tag_name: ${{ steps.versions.outputs.tag }}
+            tag_name: $mesa_version
             draft: false
             prerelease: false
