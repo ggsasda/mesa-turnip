@@ -1,4 +1,4 @@
-name: nightly-turnip-release
+name: turnip-release
 
 on:
   workflow_dispatch:
@@ -21,7 +21,7 @@ jobs:
     - name: Set up Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y meson ninja patchelf unzip curl pip flex bison zip git dpkg-dev debhelper
+        sudo apt-get install -y meson ninja-build patchelf unzip curl pip flex bison zip git dpkg-dev debhelper
 
     - name: Create Work Directory
       run: |
@@ -41,6 +41,13 @@ jobs:
         mesasrc="https://gitlab.freedesktop.org/mesa/mesa.git"
         git clone --depth=1 "$mesasrc"
         cd mesa
+
+    - name: Checkout the last stable release
+      run: |
+        # Checkout the stable release tag instead of latest commit
+        git fetch --tags
+        latest_stable_tag=$(git tag -l | grep -E '^mesa-.*' | sort -V | tail -n 1)
+        git checkout "$latest_stable_tag"
         commit_short=$(git rev-parse --short HEAD)
         commit=$(git rev-parse HEAD)
         mesa_version=$(cat VERSION | xargs)
@@ -110,6 +117,13 @@ jobs:
         dpkg-deb --build turnip_module
         mv turnip_module.deb "$PWD"
 
+    - name: Build for arm64
+      run: |
+        # Build for arm architecture
+        cp "$PWD/vulkan.ad07XX.so" "$PWD/turnip_module/DEBIAN/control"
+        dpkg-deb --build turnip_module
+        mv turnip_module.deb "$PWD/turnip_arm64.deb"
+
     - name: Upload a Build Artifact
       uses: actions/upload-artifact@v3.1.0
       with:
@@ -132,6 +146,6 @@ jobs:
         body_path: turnip_workdir/description
         name: ${{ steps.versions.outputs.name }}
         tag: ${{ steps.versions.outputs.tag }}
-        files: turnip_module.deb
+        files: turnip_module.deb turnip_arm64.deb
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
