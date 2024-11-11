@@ -7,8 +7,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  start_building_turnip:
+  start_building_turnip_aarch64:
     runs-on: ubuntu-latest
+    needs: start_building_turnip_arm  # Ensure both tasks run in parallel
 
     steps:
     - name: Checkout
@@ -25,7 +26,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y meson ninja-build patchelf unzip curl python3-pip flex bison zip git dpkg-dev debhelper
-    
+
     - name: Install or Upgrade Meson
       run: |
         python3 -m pip install --upgrade pip
@@ -63,7 +64,7 @@ jobs:
     - name: Clone and Apply Patches
       run: |
           cd $GITHUB_WORKSPACE/turnip_workdir
-          git clone https://github.com/ggsasda/mesa-turnip
+          git clone https://github.com/MastaG/mesa-turnip-ppa.git mesa-turnip
           cd mesa
           for patch in $GITHUB_WORKSPACE/turnip_workdir/mesa-turnip/turnip-patches/*.patch; do
             echo "Applying patch $patch"
@@ -71,7 +72,7 @@ jobs:
           done
           echo "All patches applied successfully."
 
-    - name: Build Mesa for Android
+    - name: Build Mesa for Android AArch64
       run: |
         cd turnip_workdir/mesa
         ndk="$PWD/../android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin"
@@ -100,17 +101,17 @@ jobs:
             -Dvulkan-beta=true -Dfreedreno-kmds=kgsl -Db_lto=true
         ninja -C build-android-aarch64
 
-    - name: Patchelf to Match Soname and Package
+    - name: Patchelf to Match Soname and Package AArch64
       run: |
         cd turnip_workdir/mesa/build-android-aarch64/src/freedreno/vulkan
         cp libvulkan_freedreno.so "$GITHUB_WORKSPACE/turnip_workdir"
         cd "$GITHUB_WORKSPACE/turnip_workdir"
         patchelf --set-soname vulkan.adreno.so libvulkan_freedreno.so
         mv libvulkan_freedreno.so vulkan.ad07XX.so
-        mkdir -p turnip_module/usr/local/lib
-        cp vulkan.ad07XX.so turnip_module/usr/local/lib
-        mkdir -p turnip_module/DEBIAN
-        cat <<EOL > turnip_module/DEBIAN/control
+        mkdir -p turnip_module_aarch64/usr/local/lib
+        cp vulkan.ad07XX.so turnip_module_aarch64/usr/local/lib
+        mkdir -p turnip_module_aarch64/DEBIAN
+        cat <<EOL > turnip_module_aarch64/DEBIAN/control
         Package: turnip
         Version: 1.0.0
         Architecture: aarch64
@@ -118,49 +119,134 @@ jobs:
         Depends: libc6 (>= 2.15), libvulkan1
         Description: Vulkan driver for Freedreno and Android
         EOL
-        dpkg-deb --build turnip_module
+        dpkg-deb --build turnip_module_aarch64
 
-    - name: Create meta.json
+  start_building_turnip_arm:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Prepare environment
       run: |
-        date=$(date +'%b %d, %Y')
-        cat <<EOF >"turnip_workdir/meta.json"
-        {
-          "schemaVersion": 1,
-          "name": "Turnip - $date - $commit_short",
-          "description": "Compiled from Mesa, Commit $commit_short",
-          "author": "mesa",
-          "packageVersion": "1",
-          "vendor": "Mesa",
-          "driverVersion": "$mesa_version/vk$vulkan_version",
-          "minApi": 27,
-          "libraryName": "vulkan.ad07XX.so"
-        }
+        sudo sed -Ei 's/^# deb-src /deb-src /' /etc/apt/sources.list
+        sudo sed -i 's/^Types: deb$/Types: deb deb-src/g' /etc/apt/sources.list.d/*.sources
+        sudo apt update
+        sudo apt build-dep mesa -y
+    
+    - name: Set up Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y meson ninja-build patchelf unzip curl python3-pip flex bison zip git dpkg-dev debhelper
+
+    - name: Install or Upgrade Meson
+      run: |
+        python3 -m pip install --upgrade pip
+        python3 -m pip install --upgrade meson
+
+    - name: Create Work Directory
+      run: |
+        mkdir -p turnip_workdir
+        cd turnip_workdir
+
+    - name: Download and Extract Android NDK
+      run: |
+        cd turnip_workdir
+        ndkver="android-ndk-r26c"
+        if [ ! -d "$ndkver" ]; then
+          curl -LO https://dl.google.com/android/repository/"$ndkver"-linux.zip
+          unzip "$ndkver"-linux.zip
+        fi
+
+    - name: Clone Mesa Source
+      run: |
+        cd turnip_workdir
+        git clone --depth=1 --branch 24.3 https://gitlab.freedesktop.org/mesa/mesa.git
+        cd mesa
+        # Get and display version info
+        commit_short=$(git rev-parse --short HEAD)
+        commit=$(git rev-parse HEAD)
+        mesa_version=$(cat VERSION | xargs)
+        version=$(awk -F'COMPLETE VK_MAKE_API_VERSION(|)' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
+        major=$(echo $version | cut -d "," -f 2 | xargs)
+        minor=$(echo $version | cut -d "," -f 3 | xargs)
+        patch=$(awk -F'VK_HEADER_VERSION |\n#define' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
+        vulkan_version="$major.$minor.$patch"
+
+    - name: Clone and Apply Patches
+      run: |
+          cd $GITHUB_WORKSPACE/turnip_workdir
+          git clone https://github.com/MastaG/mesa-turnip-ppa.git mesa-turnip
+          cd mesa
+          for patch in $GITHUB_WORKSPACE/turnip_workdir/mesa-turnip/turnip-patches/*.patch; do
+            echo "Applying patch $patch"
+            git apply "$patch"
+          done
+          echo "All patches applied successfully."
+
+    - name: Build Mesa for Android ARM
+      run: |
+        cd turnip_workdir/mesa
+        ndk="$PWD/../android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin"
+        if [ ! -f "$ndk/arm-linux-androideabi31-clang" ]; then
+          echo "Compiler not found at $ndk/arm-linux-androideabi31-clang" && exit 1
+        fi
+        cat <<EOF > "android-arm"
+        [binaries]
+        ar = '$ndk/llvm-ar'
+        c = ['ccache', '$ndk/arm-linux-androideabi31-clang']
+        cpp = ['ccache', '$ndk/arm-linux-androideabi31-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-static-libstdc++']
+        c_ld = 'lld'
+        cpp_ld = 'lld'
+        strip = '$ndk/arm-linux-androideabi-strip'
+        pkgconfig = ['env', 'PKG_CONFIG_LIBDIR=$PWD/pkgconfig', '/usr/bin/pkg-config']
+        [host_machine]
+        system = 'android'
+        cpu_family = 'arm'
+        cpu = 'armv7-a'
+        endian = 'little'
         EOF
-        mkdir -p turnip_module/usr/share/turnip
-        cp turnip_workdir/meta.json turnip_module/usr/share/turnip/
+        mkdir -p build-android-arm
+        meson setup build-android-arm --cross-file "$PWD/android-arm" \
+            -Dbuildtype=release -Dplatforms=android -Dplatform-sdk-version=31 \
+            -Dandroid-stub=true -Dgallium-drivers= -Dvulkan-drivers=freedreno \
+            -Dvulkan-beta=true -Dfreedreno-kmds=kgsl -Db_lto=true
+        ninja -C build-android-arm
 
-    - name: Upload a Build Artifact
-      uses: actions/upload-artifact@v4.4.3
-      with:
-        name: Upload meson and ninja logs for debugging
-        path: |
-          turnip_workdir/ninja_log
-          turnip_workdir/mesa/build-android-aarch64/meson-logs/meson-log.txt
-
-    - id: versions
-      name: "Get release info"
+    - name: Patchelf to Match Soname and Package ARM
       run: |
-            echo "name=$(cat turnip_workdir/release)" >> "$GITHUB_OUTPUT"
-            echo "tag=$(cat turnip_workdir/tag)" >> "$GITHUB_OUTPUT"
-            echo "filename=$(cat turnip_workdir/filename)" >> "$GITHUB_OUTPUT"
-            echo "patched=$(cat turnip_workdir/patched)" >> "$GITHUB_OUTPUT"
+        cd turnip_workdir/mesa/build-android-arm/src/freedreno/vulkan
+        cp libvulkan_freedreno.so "$GITHUB_WORKSPACE/turnip_workdir"
+        cd "$GITHUB_WORKSPACE/turnip_workdir"
+        patchelf --set-soname vulkan.adreno.so libvulkan_freedreno.so
+        mv libvulkan_freedreno.so vulkan.ad07XX.so
+        mkdir -p turnip_module_arm/usr/local/lib
+        cp vulkan.ad07XX.so turnip_module_arm/usr/local/lib
+        mkdir -p turnip_module_arm/DEBIAN
+        cat <<EOL > turnip_module_arm/DEBIAN/control
+        Package: turnip
+        Version: 1.0.0
+        Architecture: arm
+        Maintainer: Your Name <youremail@example.com>
+        Depends: libc6 (>= 2.15), libvulkan1
+        Description: Vulkan driver for Freedreno and Android
+        EOL
+        dpkg-deb --build turnip_module_arm
 
-    - name: Upload To Releases
+  upload_to_releases:
+    runs-on: ubuntu-latest
+    needs: [start_building_turnip_aarch64, start_building_turnip_arm]
+
+    steps:
+    - name: Upload AArch64 and ARM to Releases
       uses: softprops/action-gh-release@v2
       with:
-            files: ${{ github.workspace }}/turnip_workdir/turnip_module.deb
-            token: ${{ secrets.GITHUB_TOKEN }}
-            name: turnip android
-            tag_name: $mesa_version
-            draft: false
-            prerelease: false
+        files: |
+          ${{ github.workspace }}/turnip_workdir/turnip_module_aarch64.deb
+          ${{ github.workspace }}/turnip_workdir/turnip_module_arm.deb
+        token: ${{ secrets.GITHUB_TOKEN }}
+        name: turnip android
+        tag_name: ${mesa_version}
+        draft: false
+        prerelease: false
