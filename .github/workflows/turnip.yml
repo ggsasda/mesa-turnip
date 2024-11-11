@@ -1,4 +1,4 @@
-name: turnip-release
+name: turnip-release-aarch64
 
 on:
   push:
@@ -12,6 +12,7 @@ env:
 jobs:
   start_building_turnip:
     runs-on: ubuntu-latest
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -22,11 +23,10 @@ jobs:
         sudo sed -i 's/^Types: deb$/Types: deb deb-src/g' /etc/apt/sources.list.d/*.sources
         sudo apt update
         sudo apt build-dep mesa -y
-
-    - name: Set up Dependencies
+    
+    - name: Install Dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y meson ninja-build patchelf unzip curl python3-pip flex bison zip git dpkg-dev debhelper
+        sudo apt-get install -y meson ninja-build patchelf unzip curl python3-pip git dpkg-dev debhelper
 
     - name: Install or Upgrade Meson
       run: |
@@ -34,9 +34,7 @@ jobs:
         python3 -m pip install --upgrade meson
 
     - name: Create Work Directory
-      run: |
-        mkdir -p turnip_workdir
-        cd turnip_workdir
+      run: mkdir -p turnip_workdir
 
     - name: Download and Extract Android NDK
       run: |
@@ -50,21 +48,7 @@ jobs:
     - name: Clone Mesa Source
       run: |
         cd turnip_workdir
-        git clone --depth=1 --branch ${branch_version} https://gitlab.freedesktop.org/mesa/mesa.git
-        # Verify that the mesa directory exists
-        if [ ! -d "mesa" ]; then
-          echo "Mesa source not found in turnip_workdir" && exit 1
-        fi
-        cd mesa
-        # Get and display version info
-        commit_short=$(git rev-parse --short HEAD)
-        commit=$(git rev-parse HEAD)
-        mesa_version=$(cat VERSION | xargs)
-        version=$(awk -F'COMPLETE VK_MAKE_API_VERSION(|)' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
-        major=$(echo $version | cut -d "," -f 2 | xargs)
-        minor=$(echo $version | cut -d "," -f 3 | xargs)
-        patch=$(awk -F'VK_HEADER_VERSION |\n#define' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
-        vulkan_version="$major.$minor.$patch"
+        git clone --depth=1 --branch ${{ env.branch_version }} https://gitlab.freedesktop.org/mesa/mesa.git
 
     - name: Clone and Apply Patches
       run: |
@@ -72,37 +56,21 @@ jobs:
         git clone https://github.com/MastaG/mesa-turnip-ppa.git mesa-turnip
         cd mesa
         for patch in $GITHUB_WORKSPACE/turnip_workdir/mesa-turnip/turnip-patches/*.patch; do
-          echo "Applying patch $patch"
           git apply "$patch"
         done
-        echo "All patches applied successfully."
 
-  build_arm64:
-    runs-on: ubuntu-latest
-    needs: start_building_turnip  # Ensures this runs after start_building_turnip
-    steps:
-    - name: Check if mesa directory exists (Debugging)
-      run: |
-        if [ ! -d "turnip_workdir/mesa" ]; then
-          echo "Mesa source directory does not exist!" && exit 1
-        fi
-
-    - name: Build Mesa for Android (ARM64)
+    - name: Build Mesa for Android
       run: |
         cd turnip_workdir/mesa
         ndk="$PWD/../android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin"
-        if [ ! -f "$ndk/aarch64-linux-android31-clang" ]; then
-          echo "Compiler not found at $ndk/aarch64-linux-android31-clang" && exit 1
-        fi
         cat <<EOF > "android-aarch64"
         [binaries]
         ar = '$ndk/llvm-ar'
         c = ['ccache', '$ndk/aarch64-linux-android31-clang']
-        cpp = ['ccache', '$ndk/aarch64-linux-android31-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-static-libstdc++']
+        cpp = ['ccache', '$ndk/aarch64-linux-android31-clang++']
         c_ld = 'lld'
         cpp_ld = 'lld'
         strip = '$ndk/aarch64-linux-android-strip'
-        pkgconfig = ['env', 'PKG_CONFIG_LIBDIR=$PWD/pkgconfig', '/usr/bin/pkg-config']
         [host_machine]
         system = 'android'
         cpu_family = 'aarch64'
@@ -112,63 +80,34 @@ jobs:
         mkdir -p build-android-aarch64
         meson setup build-android-aarch64 --cross-file "$PWD/android-aarch64" \
             -Dbuildtype=release -Dplatforms=android -Dplatform-sdk-version=31 \
-            -Dandroid-stub=true -Dgallium-drivers= -Dvulkan-drivers=freedreno \
-            -Dvulkan-beta=true -Dfreedreno-kmds=kgsl -Db_lto=true
+            -Dvulkan-drivers=freedreno -Dvulkan-beta=true -Dfreedreno-kmds=kgsl -Db_lto=true
         ninja -C build-android-aarch64
 
-  build_arm32:
-    runs-on: ubuntu-latest
-    needs: start_building_turnip  # Ensures this runs after start_building_turnip
-    steps:
-    - name: Check if mesa directory exists (Debugging)
+    - name: Package Mesa
       run: |
-        if [ ! -d "turnip_workdir/mesa" ]; then
-          echo "Mesa source directory does not exist!" && exit 1
-        fi
+        cd turnip_workdir/mesa/build-android-aarch64/src/freedreno/vulkan
+        cp libvulkan_freedreno.so "$GITHUB_WORKSPACE/turnip_workdir"
+        cd "$GITHUB_WORKSPACE/turnip_workdir"
+        patchelf --set-soname vulkan.adreno.so libvulkan_freedreno.so
+        mv libvulkan_freedreno.so vulkan.ad07XX.so
+        mkdir -p turnip_${{ env.branch_version }}/usr/local/lib
+        cp vulkan.ad07XX.so turnip_${{ env.branch_version }}/usr/local/lib
+        mkdir -p turnip_${{ env.branch_version }}/DEBIAN
+        cat <<EOL > turnip_${{ env.branch_version }}/DEBIAN/control
+        Package: turnip
+        Version: ${{ env.branch_version }}
+        Architecture: arm64
+        Maintainer: sabamdarif
+        Description: Vulkan driver for Freedreno and Android
+        EOL
+        dpkg-deb --build turnip_${{ env.branch_version }}
 
-    - name: Build Mesa for Android (ARM32)
-      run: |
-        cd turnip_workdir/mesa
-        ndk="$PWD/../android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin"
-        if [ ! -f "$ndk/arm-linux-androideabi-clang" ]; then
-          echo "Compiler not found at $ndk/arm-linux-androideabi-clang" && exit 1
-        fi
-        cat <<EOF > "android-arm"
-        [binaries]
-        ar = '$ndk/llvm-ar'
-        c = ['ccache', '$ndk/arm-linux-androideabi-clang']
-        cpp = ['ccache', '$ndk/arm-linux-androideabi-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-static-libstdc++']
-        c_ld = 'lld'
-        cpp_ld = 'lld'
-        strip = '$ndk/arm-linux-androideabi-strip'
-        pkgconfig = ['env', 'PKG_CONFIG_LIBDIR=$PWD/pkgconfig', '/usr/bin/pkg-config']
-        [host_machine]
-        system = 'android'
-        cpu_family = 'arm'
-        cpu = 'armv7'
-        endian = 'little'
-        EOF
-        mkdir -p build-android-arm
-        meson setup build-android-arm --cross-file "$PWD/android-arm" \
-            -Dbuildtype=release -Dplatforms=android -Dplatform-sdk-version=31 \
-            -Dandroid-stub=true -Dgallium-drivers= -Dvulkan-drivers=freedreno \
-            -Dvulkan-beta=true -Dfreedreno-kmds=kgsl -Db_lto=true
-        ninja -C build-android-arm
-
-  upload_releases:
-    runs-on: ubuntu-latest
-    needs: [build_arm64, build_arm32]  # Ensure this runs after both arm64 and arm32 builds
-    steps:
-    - name: Upload ARM64 Release
-      run: |
-        curl -X POST \
-          -F "file=@${GITHUB_WORKSPACE}/turnip_workdir/turnip_${branch_version}_arm64.deb" \
-          -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-          "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ needs.start_building_turnip.outputs.release_id }}/assets?name=turnip_arm64.deb"
-
-    - name: Upload ARM32 Release
-      run: |
-        curl -X POST \
-          -F "file=@${GITHUB_WORKSPACE}/turnip_workdir/turnip_${branch_version}_arm32.deb" \
-          -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-          "https://uploads.github.com/repos/${{ github.repository }}/releases/${{ needs.start_building_turnip.outputs.release_id }}/assets?name=turnip_arm32.deb"
+    - name: Upload To Releases
+      uses: softprops/action-gh-release@v2
+      with:
+        files: ${{ github.workspace }}/turnip_workdir/turnip_${{ env.branch_version }}.deb
+        token: ${{ secrets.GITHUB_TOKEN }}
+        name: turnip android
+        tag_name: mesa_turnip_${{ env.branch_version }}
+        draft: false
+        prerelease: false
