@@ -1,145 +1,120 @@
-name: Build and Package Turnip Vulkan Driver
+name: turnip-release
 
 on:
-  push:
-    branches:
-      - main  # Change this to your default branch
   workflow_dispatch:
+  schedule:
+    - cron: '30 2 * * *'
 
 jobs:
-  build-turnip:
+  start_building_turnip:
     runs-on: ubuntu-latest
 
-    env:
-      ndkver: android-ndk-r26c
-      sdkver: 31
-      mesasrc: https://gitlab.freedesktop.org/mesa/mesa.git
-
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v3
+    - name: Checkout
+      uses: actions/checkout@v4
 
-    - name: Prepare Environment
+    - name: Prepare environment
       run: |
         sudo sed -Ei 's/^# deb-src /deb-src /' /etc/apt/sources.list
         sudo sed -i 's/^Types: deb$/Types: deb deb-src/g' /etc/apt/sources.list.d/*.sources
         sudo apt update
         sudo apt build-dep mesa -y
-
-    - name: Install Dependencies
+    
+    - name: Set up Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y meson ninja-build patchelf unzip curl python3-pip flex bison zip git ccache
-        pip3 install --upgrade pip
+        sudo apt-get install -y meson ninja-build patchelf unzip curl python3-pip flex bison zip git dpkg-dev debhelper
 
-    - name: Set Up Work Directory
+    - name: Create Work Directory
       run: |
-        mkdir -p $GITHUB_WORKSPACE/turnip_workdir
-        cd $GITHUB_WORKSPACE/turnip_workdir
+        mkdir -p turnip_workdir
+        cd turnip_workdir
 
-    - name: Download and Extract NDK
+    - name: Download and Extract Android NDK
       run: |
-        if [ -z "${ANDROID_NDK_LATEST_HOME}" ]; then
-          if [ ! -d android-ndk ]; then
-            curl -sSL https://dl.google.com/android/repository/${ndkver}-linux.zip -o ${ndkver}-linux.zip
-            unzip -q ${ndkver}-linux.zip
-          fi
-        else
-          echo "Using NDK from environment"
+        cd turnip_workdir
+        ndkver="android-ndk-r26c"
+        if [ ! -d "$ndkver" ]; then
+          curl -LO https://dl.google.com/android/repository/"$ndkver"-linux.zip
+          unzip "$ndkver"-linux.zip
         fi
 
-    - name: Clone Mesa Repository
+    - name: Clone Mesa Source
       run: |
-        cd $GITHUB_WORKSPACE/turnip_workdir
-        if [ -d mesa ]; then
-          rm -rf mesa
-        fi
-        git clone --depth=1 $mesasrc
+        cd turnip_workdir
+        git clone --depth=1 https://gitlab.freedesktop.org/mesa/mesa.git
         cd mesa
-        echo "Mesa cloned at commit $(git rev-parse --short HEAD)"
+        # Get and display version info
+        commit_short=$(git rev-parse --short HEAD)
+        commit=$(git rev-parse HEAD)
+        mesa_version=$(cat VERSION | xargs)
+        version=$(awk -F'COMPLETE VK_MAKE_API_VERSION(|)' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
+        major=$(echo $version | cut -d "," -f 2 | xargs)
+        minor=$(echo $version | cut -d "," -f 3 | xargs)
+        patch=$(awk -F'VK_HEADER_VERSION |\n#define' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
+        vulkan_version="$major.$minor.$patch"
 
     - name: Clone and Apply Patches
       run: |
-        cd $GITHUB_WORKSPACE/turnip_workdir
-        git clone https://github.com/ggsasda/mesa-turnip
-        cd mesa
-        for patch in $GITHUB_WORKSPACE/turnip_workdir/mesa-turnip/turnip-patches/*.patch; do
-          echo "Applying patch $patch"
-          git apply "$patch"
-        done
-        echo "All patches applied successfully."
+          cd $GITHUB_WORKSPACE/turnip_workdir
+          git clone https://github.com/ggsasda/mesa-turnip
+          cd mesa
+          for patch in $GITHUB_WORKSPACE/turnip_workdir/mesa-turnip/turnip-patches/*.patch; do
+            echo "Applying patch $patch"
+            git apply "$patch"
+          done
+          echo "All patches applied successfully."
 
-    - name: Install Updated Meson
+    - name: Build Mesa for Android
       run: |
-        pip3 install meson==1.1.0  # or the latest version compatible with your project
-
-    - name: Create Meson Cross File and Build
-      run: |
-        cd $GITHUB_WORKSPACE/turnip_workdir/mesa
-        ndk="$PWD/../${{ env.ndkver }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+        cd turnip_workdir/mesa
+        ndk="$PWD/../android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin"
+        if [ ! -f "$ndk/aarch64-linux-android31-clang" ]; then
+          echo "Compiler not found at $ndk/aarch64-linux-android31-clang" && exit 1
+        fi
         cat <<EOF > "android-aarch64"
         [binaries]
         ar = '$ndk/llvm-ar'
-        c = ['ccache', '$ndk/aarch64-linux-android${{ env.sdkver }}-clang']
-        cpp = ['ccache', '$ndk/aarch64-linux-android${{ env.sdkver }}-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-static-libstdc++']
+        c = ['ccache', '$ndk/aarch64-linux-android31-clang']
+        cpp = ['ccache', '$ndk/aarch64-linux-android31-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-static-libstdc++']
         c_ld = 'lld'
         cpp_ld = 'lld'
         strip = '$ndk/aarch64-linux-android-strip'
-        pkgconfig = ['env', 'PKG_CONFIG_LIBDIR=NDKDIR/pkgconfig', '/usr/bin/pkg-config']
+        pkgconfig = ['env', 'PKG_CONFIG_LIBDIR=$PWD/pkgconfig', '/usr/bin/pkg-config']
         [host_machine]
         system = 'android'
         cpu_family = 'aarch64'
         cpu = 'armv8'
         endian = 'little'
         EOF
-
         mkdir -p build-android-aarch64
-        meson build-android-aarch64 --cross-file "$PWD/android-aarch64" \
-            -Dbuildtype=release \
-            -Dplatforms=android \
-            -Dplatform-sdk-version=${{ env.sdkver }} \
-            -Dandroid-stub=true \
-            -Dgallium-drivers= \
-            -Dvulkan-drivers=freedreno \
-            -Dvulkan-beta=true \
-            -Dfreedreno-kmds=kgsl \
-            -Db_lto=true
+        meson setup build-android-aarch64 --cross-file "$PWD/android-aarch64" \
+            -Dbuildtype=release -Dplatforms=android -Dplatform-sdk-version=31 \
+            -Dandroid-stub=true -Dgallium-drivers= -Dvulkan-drivers=freedreno \
+            -Dvulkan-beta=true -Dfreedreno-kmds=kgsl -Db_lto=true
         ninja -C build-android-aarch64
 
-    - name: Build with Meson and Ninja
+    - name: Patchelf to Match Soname and Package
       run: |
-        cd $GITHUB_WORKSPACE/turnip_workdir/mesa
-        meson build-android-aarch64 --cross-file android-aarch64 -Dbuildtype=release -Dplatforms=android -Dplatform-sdk-version=${{ env.sdkver }} -Dandroid-stub=true -Dgallium-drivers= -Dvulkan-drivers=freedreno -Dvulkan-beta=true -Dfreedreno-kmds=kgsl -Db_lto=true
-        ninja -C build-android-aarch64
-
-    - name: Package with Patchelf and Zip
-      run: |
-        cd $GITHUB_WORKSPACE/turnip_workdir/mesa/build-android-aarch64/src/freedreno/vulkan
-        cp libvulkan_freedreno.so $GITHUB_WORKSPACE/turnip_workdir
-        cd $GITHUB_WORKSPACE/turnip_workdir
+        cd turnip_workdir/mesa/build-android-aarch64/src/freedreno/vulkan
+        cp libvulkan_freedreno.so "$GITHUB_WORKSPACE/turnip_workdir"
+        cd "$GITHUB_WORKSPACE/turnip_workdir"
         patchelf --set-soname vulkan.adreno.so libvulkan_freedreno.so
         mv libvulkan_freedreno.so vulkan.ad07XX.so
+        mkdir -p turnip_module/usr/local/lib
+        cp vulkan.ad07XX.so turnip_module/usr/local/lib
+        mkdir -p turnip_module/DEBIAN
+        cat <<EOL > turnip_module/DEBIAN/control
+        Package: turnip
+        Version: 1.0.0
+        Architecture: aarch64
+        Maintainer: Your Name <youremail@example.com>
+        Depends: libc6 (>= 2.15), libvulkan1
+        Description: Vulkan driver for Freedreno and Android
+        EOL
+        dpkg-deb --build turnip_module
 
-        mkdir -p $GITHUB_WORKSPACE/turnip_workdir/turnip_module
-        cp vulkan.ad07XX.so $GITHUB_WORKSPACE/turnip_workdir/turnip_module
-
-        cat <<EOF > $GITHUB_WORKSPACE/turnip_workdir/turnip_module/meta.json
-        {
-          "schemaVersion": 1,
-          "name": "Turnip - $(date +'%b %d, %Y') - $(git -C $GITHUB_WORKSPACE/turnip_workdir/mesa rev-parse --short HEAD)",
-          "description": "Compiled from Mesa",
-          "author": "mesa",
-          "packageVersion": "1",
-          "vendor": "Mesa",
-          "driverVersion": "$(cat $GITHUB_WORKSPACE/turnip_workdir/mesa/VERSION)/vk$(awk -F'COMPLETE VK_MAKE_API_VERSION(|)' '{print $2}' <<< $(cat $GITHUB_WORKSPACE/turnip_workdir/mesa/include/vulkan/vulkan_core.h) | xargs)",
-          "minApi": 27,
-          "libraryName": "vulkan.ad07XX.so"
-        }
-        EOF
-
-        zip -9 $GITHUB_WORKSPACE/turnip_build_$(date +'%b-%d-%Y').zip -j $GITHUB_WORKSPACE/turnip_workdir/turnip_module/*
-
-    - name: Upload Build Artifact
+    - name: Upload a Build Artifact
       uses: actions/upload-artifact@v3.1.0
       with:
         name: Upload meson and ninja logs for debugging
@@ -161,15 +136,6 @@ jobs:
         body_path: turnip_workdir/description
         name: ${{ steps.versions.outputs.name }}
         tag_name: ${{ steps.versions.outputs.tag }}
-        files: |
-          turnip_workdir/${{ steps.versions.outputs.filename }}.zip
-
-    - name: Release "turnip" with patched
-      if: ${{ contains(steps.versions.outputs.patched, 'true') }}
-      uses: softprops/action-gh-release@v1
-      with:
-        body_path: turnip_workdir/description
-        name: ${{ steps.versions.outputs.name }}
-        tag_name: ${{ steps.versions.outputs.tag }}
-        files: |
-          turnip_workdir/${{ steps.versions.outputs.filename }}_patched.zip
+        files: turnip_module.deb
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
