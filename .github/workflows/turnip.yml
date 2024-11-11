@@ -70,18 +70,24 @@ jobs:
 
     - name: Apply Patches (If Any)
       run: |
-        patches=("fix-for-anon-file;../../turnip-patches/fix-for-anon-file.patch;")
-        for patch in ${patches[@]}; do
-          patch_source=$(echo $patch | cut -d ";" -f 2 | xargs)
-          if [[ $patch_source == *"../.."* ]]; then
-            git apply "$patch_source"
-          else 
-            patch_file="${patch_source#*\/}"
-            patch_args=$(echo $patch | cut -d ";" -f 3 | xargs)
-            curl --output "$patch_file".patch -k --retry 5 --retry-delay 30 --retry-all-errors -f https://gitlab.freedesktop.org/mesa/mesa/-/"$patch_source".patch
-            git apply $patch_args "$patch_file".patch
-          fi
-        done
+            # Define the patches directory
+            patches_dir="turnip-patches"
+            
+            # Ensure the patches directory exists and is accessible
+            if [ ! -d "$patches_dir" ]; then
+              echo "Patches directory does not exist. Exiting."
+              exit 1
+            fi
+        
+            # Loop through all patch files in the patches directory
+            for patch_file in "$patches_dir"/*.patch; do
+              if [ -f "$patch_file" ]; then
+                echo "Applying patch: $patch_file"
+                git apply "$patch_file"
+              else
+                echo "No patches found in $patches_dir"
+              fi
+            done
 
     - name: Build Mesa for Android
       run: |
