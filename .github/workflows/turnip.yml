@@ -28,6 +28,15 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y meson ninja-build patchelf unzip curl python3-pip flex bison zip git dpkg-dev debhelper pkg-config docker.io
+        sudo apt-get remove containerd
+        sudo apt-get install containerd.io
+        sudo apt-get install -y --reinstall containerd.io
+        sudo apt-get install -y --reinstall containerd
+        sudo apt-get update
+        sudo apt-get upgrade
+        sudo apt-mark unhold containerd
+        sudo apt-get update
+        sudo apt-get install containerd.io
 
     - name: Install or Upgrade Meson
       run: |
