@@ -8,8 +8,10 @@ on:
 jobs:
   start_building_turnip:
     runs-on: ubuntu-24.04
+
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
     - name: Prepare environment
       run: |
@@ -21,7 +23,7 @@ jobs:
     - name: Set up Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y meson ninja-build patchelf unzip curl pip flex bison zip git dpkg-dev debhelper
+        sudo apt-get install -y meson ninja-build patchelf unzip curl pip flex bison zip git dpkg-dev debhelper -y
 
     - name: Create Work Directory
       run: |
@@ -38,8 +40,7 @@ jobs:
 
     - name: Clone Mesa Source
       run: |
-          mesasrc="https://gitlab.freedesktop.org/mesa/mesa.git"
-          git clone --depth=1 "$mesasrc"
+          git clone --depth=1 https://gitlab.freedesktop.org/mesa/mesa.git
           cd mesa
           commit_short=$(git rev-parse --short HEAD)
           commit=$(git rev-parse HEAD)
@@ -78,11 +79,12 @@ jobs:
 
     - name: Apply Patches (If Any)
       run: |
-            # Navigate to the mesa source directory
+            cd ..
+            git clone https://github.com/ggsasda/mesa-turnip
+            current_direc=${pwd}
             cd mesa
-        
             # Define the patches directory (assuming it's in the root of the repo)
-            patches_dir="turnip-patches"
+            patches_dir="${current_direc}/mesa-turnip/turnip-patches"
             
             # Ensure the patches directory exists and is accessible
             if [ ! -d "$patches_dir" ]; then
