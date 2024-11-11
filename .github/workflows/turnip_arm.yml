@@ -27,7 +27,7 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y meson ninja-build patchelf unzip curl python3-pip flex bison zip git dpkg-dev debhelper pkg-config rpm-build base-devel alpine-sdk
+        sudo apt-get install -y meson ninja-build patchelf unzip curl python3-pip flex bison zip git dpkg-dev debhelper pkg-config docker.io
 
     - name: Install or Upgrade Meson
       run: |
@@ -103,74 +103,28 @@ jobs:
         EOL
         dpkg-deb --build turnip_${{ env.branch_version }}
 
-    # New steps for additional packages
-
-    - name: Create RPM Package
+    # Build RPM in Fedora Docker
+    - name: Build RPM in Fedora Docker
       run: |
-        cd "$GITHUB_WORKSPACE/turnip_workdir"
-        mkdir -p turnip_${{ env.branch_version }}/usr/local/lib
-        cp vulkan.ad07XX.so turnip_${{ env.branch_version }}/usr/local/lib
-        mkdir -p turnip_${{ env.branch_version }}/SPECS
-        cat <<EOL > turnip_${{ env.branch_version }}/SPECS/turnip.spec
-        Name: turnip
-        Version: ${{ env.branch_version }}
-        Release: 1%{?dist}
-        Summary: Vulkan driver for Freedreno and Android (32-bit)
-        License: MIT
-        Group: System Environment/Libraries
-        BuildArch: armv7hl
-        Requires: 
-        %description
-        Vulkan driver for Freedreno and Android (32-bit)
-        %files
-        /usr/local/lib/vulkan.ad07XX.so
-        %post
-        echo "Vulkan driver installed"
-        EOL
-        rpmbuild -bb turnip_${{ env.branch_version }}/SPECS/turnip.spec
+        docker run --rm -v $PWD:/workspace fedora:latest bash -c "
+          cd /workspace &&
+          dnf install -y rpm-build &&
+          rpmbuild -bb turnip.spec"  # Make sure you have a valid 'turnip.spec' file
 
-    - name: Create Arch Package
+    # Build Arch Package in Arch Docker
+    - name: Build Arch Package in Arch Docker
       run: |
-        cd "$GITHUB_WORKSPACE/turnip_workdir"
-        mkdir -p turnip_${{ env.branch_version }}/usr/local/lib
-        cp vulkan.ad07XX.so turnip_${{ env.branch_version }}/usr/local/lib
-        mkdir -p turnip_${{ env.branch_version }}/PKGBUILD
-        cat <<EOL > turnip_${{ env.branch_version }}/PKGBUILD
-        pkgname=turnip
-        pkgver=${{ env.branch_version }}
-        pkgrel=1
-        pkgdesc="Vulkan driver for Freedreno and Android (32-bit)"
-        arch=('armv7h')
-        license=('MIT')
-        url="https://github.com/Mesa3D/mesa"
-        depends=()
-        source=("vulkan.ad07XX.so")
-        package() {
-          install -D -m755 vulkan.ad07XX.so \$pkgdir/usr/local/lib/
-        }
-        EOL
-        makepkg -si
+        docker run --rm -v $PWD:/workspace archlinux:latest bash -c "
+          cd /workspace &&
+          makepkg -si"  # Make sure your PKGBUILD file is in the workspace
 
-    - name: Create Alpine Package
+    # Build Alpine Package in Alpine Docker
+    - name: Build Alpine Package in Alpine Docker
       run: |
-        cd "$GITHUB_WORKSPACE/turnip_workdir"
-        mkdir -p turnip_${{ env.branch_version }}/usr/local/lib
-        cp vulkan.ad07XX.so turnip_${{ env.branch_version }}/usr/local/lib
-        mkdir -p turnip_${{ env.branch_version }}/APKBUILD
-        cat <<EOL > turnip_${{ env.branch_version }}/APKBUILD
-        # Maintainer: sabamdarif
-        pkgname=turnip
-        pkgver=${{ env.branch_version }}
-        pkgrel=1
-        pkgdesc="Vulkan driver for Freedreno and Android (32-bit)"
-        arch="armv7"
-        license="MIT"
-        source=("vulkan.ad07XX.so")
-        package() {
-          install -D -m755 vulkan.ad07XX.so \$pkgdir/usr/local/lib/
-        }
-        EOL
-        abuild -r
+        docker run --rm -v $PWD:/workspace alpine:latest bash -c "
+          apk add --no-cache abuild &&
+          cd /workspace &&
+          abuild -r"  # Make sure you have a valid abuild config
 
     - name: Upload To Releases
       uses: softprops/action-gh-release@v2
