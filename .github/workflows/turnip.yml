@@ -38,9 +38,17 @@ jobs:
 
     - name: Clone Mesa Source
       run: |
-        mesasrc="https://gitlab.freedesktop.org/mesa/mesa.git"
-        git clone --depth=1 "$mesasrc"
-        cd mesa
+          mesasrc="https://gitlab.freedesktop.org/mesa/mesa.git"
+          git clone --depth=1 "$mesasrc"
+          cd mesa
+          commit_short=$(git rev-parse --short HEAD)
+          commit=$(git rev-parse HEAD)
+          mesa_version=$(cat VERSION | xargs)
+          version=$(awk -F'COMPLETE VK_MAKE_API_VERSION(|)' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
+          major=$(echo $version | cut -d "," -f 2 | xargs)
+          minor=$(echo $version | cut -d "," -f 3 | xargs)
+          patch=$(awk -F'VK_HEADER_VERSION |\n#define' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
+          vulkan_version="$major.$minor.$patch"
 
     - name: Checkout the last stable release
       run: |
@@ -70,7 +78,10 @@ jobs:
 
     - name: Apply Patches (If Any)
       run: |
-            # Define the patches directory
+            # Navigate to the mesa source directory
+            cd mesa
+        
+            # Define the patches directory (assuming it's in the root of the repo)
             patches_dir="turnip-patches"
             
             # Ensure the patches directory exists and is accessible
@@ -83,12 +94,14 @@ jobs:
             for patch_file in "$patches_dir"/*.patch; do
               if [ -f "$patch_file" ]; then
                 echo "Applying patch: $patch_file"
+                
+                # Apply the patch to the cloned Mesa repository
                 git apply "$patch_file"
               else
                 echo "No patches found in $patches_dir"
               fi
             done
-
+        
     - name: Build Mesa for Android
       run: |
         ndk="$PWD/android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin"
