@@ -182,60 +182,19 @@ jobs:
         EOL
         dpkg-deb --build turnip_${branch_version}
 
-  create_meta:
-    runs-on: ubuntu-latest
-    needs: [build_arm64, build_arm32]  # Create meta after both ARM64 and ARM32 builds complete
-
-    steps:
-    - name: Create meta.json
-      run: |
-        date=$(date +'%b %d, %Y')
-        cat <<EOF >"turnip_workdir/meta.json"
-        {
-          "schemaVersion": 1,
-          "name": "Turnip - $date - $commit_short",
-          "description": "Compiled from Mesa, Commit $commit_short",
-          "author": "mesa",
-          "packageVersion": "1",
-          "vendor": "Mesa",
-          "driverVersion": "$mesa_version/vk$vulkan_version",
-          "minApi": 27,
-          "libraryName": "vulkan.ad07XX.so"
-        }
-        EOF
-        mkdir -p turnip_${branch_version}/usr/share/turnip
-        cp turnip_workdir/meta.json turnip_${branch_version}/usr/share/turnip/
-
   upload_build_artifacts:
     runs-on: ubuntu-latest
-    needs: [create_meta]
+    needs: [build_arm64, build_arm32]  # Ensures this runs after both ARM64 and ARM32 builds
 
     steps:
-    - name: Upload a Build Artifact
-      uses: actions/upload-artifact@v4.4.3
-      with:
-        name: Upload meson and ninja logs for debugging
-        path: |
-          turnip_workdir/ninja_log
-          turnip_workdir/mesa/build-android-aarch64/meson-logs/meson-log.txt
-          turnip_workdir/mesa/build-android-arm/meson-logs/meson-log.txt
-
-    - id: versions
-      name: "Get release info"
-      run: |
-            echo "name=$(cat turnip_workdir/release)" >> "$GITHUB_OUTPUT"
-            echo "tag=$(cat turnip_workdir/tag)" >> "$GITHUB_OUTPUT"
-            echo "filename=$(cat turnip_workdir/filename)" >> "$GITHUB_OUTPUT"
-            echo "patched=$(cat turnip_workdir/patched)" >> "$GITHUB_OUTPUT"
-
-    - name: Upload To Releases
+    - name: Upload ARM64 and ARM32 builds to Releases
       uses: softprops/action-gh-release@v2
       with:
-            files: |
-              ${{ github.workspace }}/turnip_workdir/turnip_${branch_version}.deb
-              ${{ github.workspace }}/turnip_workdir/turnip_${branch_version}_armhf.deb
-            token: ${{ secrets.GITHUB_TOKEN }}
-            name: turnip android
-            tag_name: $mesa_version
-            draft: false
-            prerelease: false
+        files: |
+          ${{ github.workspace }}/turnip_workdir/turnip_${branch_version}.deb
+          ${{ github.workspace }}/turnip_workdir/turnip_${branch_version}_armhf.deb
+        token: ${{ secrets.GITHUB_TOKEN }}
+        name: turnip android
+        tag_name: $mesa_version
+        draft: false
+        prerelease: false
