@@ -27,7 +27,7 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y meson ninja-build patchelf unzip curl python3-pip flex bison zip git dpkg-dev debhelper pkg-config
+        sudo apt-get install -y meson ninja-build patchelf unzip curl python3-pip flex bison zip git dpkg-dev debhelper pkg-config rpm-build base-devel alpine-sdk
 
     - name: Install or Upgrade Meson
       run: |
@@ -103,10 +103,83 @@ jobs:
         EOL
         dpkg-deb --build turnip_${{ env.branch_version }}
 
+    # New steps for additional packages
+
+    - name: Create RPM Package
+      run: |
+        cd "$GITHUB_WORKSPACE/turnip_workdir"
+        mkdir -p turnip_${{ env.branch_version }}/usr/local/lib
+        cp vulkan.ad07XX.so turnip_${{ env.branch_version }}/usr/local/lib
+        mkdir -p turnip_${{ env.branch_version }}/SPECS
+        cat <<EOL > turnip_${{ env.branch_version }}/SPECS/turnip.spec
+        Name: turnip
+        Version: ${{ env.branch_version }}
+        Release: 1%{?dist}
+        Summary: Vulkan driver for Freedreno and Android (32-bit)
+        License: MIT
+        Group: System Environment/Libraries
+        BuildArch: armv7hl
+        Requires: 
+        %description
+        Vulkan driver for Freedreno and Android (32-bit)
+        %files
+        /usr/local/lib/vulkan.ad07XX.so
+        %post
+        echo "Vulkan driver installed"
+        EOL
+        rpmbuild -bb turnip_${{ env.branch_version }}/SPECS/turnip.spec
+
+    - name: Create Arch Package
+      run: |
+        cd "$GITHUB_WORKSPACE/turnip_workdir"
+        mkdir -p turnip_${{ env.branch_version }}/usr/local/lib
+        cp vulkan.ad07XX.so turnip_${{ env.branch_version }}/usr/local/lib
+        mkdir -p turnip_${{ env.branch_version }}/PKGBUILD
+        cat <<EOL > turnip_${{ env.branch_version }}/PKGBUILD
+        pkgname=turnip
+        pkgver=${{ env.branch_version }}
+        pkgrel=1
+        pkgdesc="Vulkan driver for Freedreno and Android (32-bit)"
+        arch=('armv7h')
+        license=('MIT')
+        url="https://github.com/Mesa3D/mesa"
+        depends=()
+        source=("vulkan.ad07XX.so")
+        package() {
+          install -D -m755 vulkan.ad07XX.so \$pkgdir/usr/local/lib/
+        }
+        EOL
+        makepkg -si
+
+    - name: Create Alpine Package
+      run: |
+        cd "$GITHUB_WORKSPACE/turnip_workdir"
+        mkdir -p turnip_${{ env.branch_version }}/usr/local/lib
+        cp vulkan.ad07XX.so turnip_${{ env.branch_version }}/usr/local/lib
+        mkdir -p turnip_${{ env.branch_version }}/APKBUILD
+        cat <<EOL > turnip_${{ env.branch_version }}/APKBUILD
+        # Maintainer: sabamdarif
+        pkgname=turnip
+        pkgver=${{ env.branch_version }}
+        pkgrel=1
+        pkgdesc="Vulkan driver for Freedreno and Android (32-bit)"
+        arch="armv7"
+        license="MIT"
+        source=("vulkan.ad07XX.so")
+        package() {
+          install -D -m755 vulkan.ad07XX.so \$pkgdir/usr/local/lib/
+        }
+        EOL
+        abuild -r
+
     - name: Upload To Releases
       uses: softprops/action-gh-release@v2
       with:
-        files: ${{ github.workspace }}/turnip_workdir/turnip_${{ env.branch_version }}.deb
+        files: |
+          ${{ github.workspace }}/turnip_workdir/turnip_${{ env.branch_version }}.deb
+          ${{ github.workspace }}/turnip_workdir/turnip_${{ env.branch_version }}.rpm
+          ${{ github.workspace }}/turnip_workdir/turnip_${{ env.branch_version }}-*.pkg.tar.zst
+          ${{ github.workspace }}/turnip_workdir/turnip_${{ env.branch_version }}-*.apk
         token: ${{ secrets.GITHUB_TOKEN }}
         name: turnip android arm
         tag_name: mesa_turnip_${{ env.branch_version }}_arm
