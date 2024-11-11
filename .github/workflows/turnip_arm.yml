@@ -27,7 +27,7 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y meson ninja-build patchelf curl unzip python3-pip zip git dpkg-dev debhelper
+        sudo apt-get install -y meson ninja-build patchelf unzip curl python3-pip flex bison zip git dpkg-dev debhelper pkg-config
 
     - name: Install or Upgrade Meson
       run: |
