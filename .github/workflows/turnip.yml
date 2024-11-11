@@ -1,9 +1,10 @@
 name: turnip-release
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
-  schedule:
-    - cron: '30 2 * * *'
 
 jobs:
   start_building_turnip:
@@ -47,7 +48,7 @@ jobs:
     - name: Clone Mesa Source
       run: |
         cd turnip_workdir
-        git clone --depth=1 https://gitlab.freedesktop.org/mesa/mesa.git
+        git clone --depth=1 --branch 24.3 https://gitlab.freedesktop.org/mesa/mesa.git
         cd mesa
         # Get and display version info
         commit_short=$(git rev-parse --short HEAD)
@@ -58,6 +59,7 @@ jobs:
         minor=$(echo $version | cut -d "," -f 3 | xargs)
         patch=$(awk -F'VK_HEADER_VERSION |\n#define' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
         vulkan_version="$major.$minor.$patch"
+
 
     - name: Clone and Apply Patches
       run: |
@@ -120,7 +122,7 @@ jobs:
         dpkg-deb --build turnip_module
 
     - name: Upload a Build Artifact
-      uses: actions/upload-artifact@v3.1.0
+      uses: actions/upload-artifact@v3.2.0  # Update to the correct version
       with:
         name: Upload meson and ninja logs for debugging
         path: |
@@ -142,4 +144,13 @@ jobs:
           git config --global user.email "actions@github.com"
           git tag ${{ steps.versions.outputs.tag }}
           git push origin ${{ steps.versions.outputs.tag }}
-      
+  
+    - name: Upload To Releases
+      uses: softprops/action-gh-release@v2
+      with:
+            files: ${{ github.workspace }}/turnip_workdir/turnip_module.deb
+            token: ${{ secrets.GITHUB_TOKEN }}
+            name: turnip android
+            tag_name: ${{ steps.versions.outputs.tag }}
+            draft: false
+            prerelease: false
