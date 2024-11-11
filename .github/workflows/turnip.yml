@@ -44,18 +44,29 @@ jobs:
 
     - name: Checkout the last stable release
       run: |
-        # Checkout the stable release tag instead of latest commit
-        git fetch --tags
-        latest_stable_tag=$(git tag -l | grep -E '^mesa-.*' | sort -V | tail -n 1)
-        git checkout "$latest_stable_tag"
-        commit_short=$(git rev-parse --short HEAD)
-        commit=$(git rev-parse HEAD)
-        mesa_version=$(cat VERSION | xargs)
-        version=$(awk -F'COMPLETE VK_MAKE_API_VERSION(|)' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
-        major=$(echo $version | cut -d "," -f 2 | xargs)
-        minor=$(echo $version | cut -d "," -f 3 | xargs)
-        patch=$(awk -F'VK_HEADER_VERSION |\n#define' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
-        vulkan_version="$major.$minor.$patch"
+          # Fetch all tags
+          git fetch --tags
+          # Find the latest stable version (based on versioning pattern, adjust as needed)
+          latest_stable_tag=$(git tag -l | sort -V | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | tail -n 1)
+          
+          # If no stable tag is found, fall back to a default branch
+          if [ -z "$latest_stable_tag" ]; then
+            echo "No stable tag found, falling back to main branch"
+            latest_stable_tag="main"
+          fi
+          
+          echo "Checking out tag: $latest_stable_tag"
+          git checkout "$latest_stable_tag"
+          
+          # Extract version information
+          commit_short=$(git rev-parse --short HEAD)
+          commit=$(git rev-parse HEAD)
+          mesa_version=$(cat VERSION | xargs)
+          version=$(awk -F'COMPLETE VK_MAKE_API_VERSION(|)' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
+          major=$(echo $version | cut -d "," -f 2 | xargs)
+          minor=$(echo $version | cut -d "," -f 3 | xargs)
+          patch=$(awk -F'VK_HEADER_VERSION |\n#define' '{print $2}' <<< $(cat include/vulkan/vulkan_core.h) | xargs)
+          vulkan_version="$major.$minor.$patch"      
 
     - name: Apply Patches (If Any)
       run: |
