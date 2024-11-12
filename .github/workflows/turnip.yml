@@ -288,16 +288,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: [start_building_turnip_arm64, start_building_turnip_armhf]
     steps:
-    - name: Create GitHub Release
-      id: create_release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: mesa_turnip_${{ env.branch_version }}
-        release_name: ubuntu turnip android ${{ env.branch_version }}-devel
-        draft: false
-        prerelease: true
 
     - name: Upload ARM64 Artifact to Release
       uses: softprops/action-gh-release@v2
