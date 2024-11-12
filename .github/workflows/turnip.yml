@@ -300,21 +300,21 @@ jobs:
         prerelease: true
 
     - name: Upload ARM64 Artifact to Release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: softprops/action-gh-release@v2
       with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ${{ github.workspace }}/turnip_arm64_workdir/turnip_${{ env.branch_version }}_arm64.deb
-        asset_name: turnip_${{ env.branch_version }}_arm64.deb
-        asset_content_type: application/vnd.debian.binary-package
+        files: ${{ github.workspace }}/turnip_arm64_workdir/turnip_${{ env.branch_version }}_arm64.deb
+        token: ${{ secrets.GITHUB_TOKEN }}
+        name: ubuntu turnip android ${{ env.branch_version }}-devel
+        tag_name: mesa_turnip_${{ env.branch_version }}
+        draft: false
+        prerelease: true
 
     - name: Upload ARMHF Artifact to Release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: softprops/action-gh-release@v2
       with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ${{ github.workspace }}/turnip_armhf_workdir/turnip_${{ env.branch_version }}_armhf.deb
-        asset_name: turnip_${{ env.branch_version }}_armhf.deb
-        asset_content_type: application/vnd.debian.binary-package
+        files: ${{ github.workspace }}/turnip_armhf_workdir/turnip_${{ env.branch_version }}_armhf.deb
+        token: ${{ secrets.GITHUB_TOKEN }}
+        name: ubuntu turnip android ${{ env.branch_version }}-devel
+        tag_name: mesa_turnip_${{ env.branch_version }}
+        draft: false
+        prerelease: true
