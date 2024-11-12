@@ -36,12 +36,12 @@ jobs:
 
     - name: Create Work Directory
       run: |
-        mkdir -p turnip_workdir
-        cd turnip_workdir
+        mkdir -p turnip_arm64_workdir
+        cd turnip_arm64_workdir
 
     - name: Download and Extract Android NDK
       run: |
-        cd turnip_workdir
+        cd turnip_arm64_workdir
         ndkver="android-ndk-r26c"
         if [ ! -d "$ndkver" ]; then
           curl -LO https://dl.google.com/android/repository/"$ndkver"-linux.zip
@@ -50,7 +50,7 @@ jobs:
 
     - name: Clone Mesa Source
       run: |
-        cd turnip_workdir
+        cd turnip_arm64_workdir
         git clone --depth=1 --branch ${{ env.branch_version }} https://gitlab.freedesktop.org/mesa/mesa.git
         cd mesa
         commit_short=$(git rev-parse --short HEAD)
@@ -64,10 +64,10 @@ jobs:
 
     - name: Clone and Apply Patches
       run: |
-        cd $GITHUB_WORKSPACE/turnip_workdir
+        cd $GITHUB_WORKSPACE/turnip_arm64_workdir
         git clone https://github.com/MastaG/mesa-turnip-ppa.git mesa-turnip
         cd mesa
-        for patch in $GITHUB_WORKSPACE/turnip_workdir/mesa-turnip/turnip-patches/*.patch; do
+        for patch in $GITHUB_WORKSPACE/turnip_arm64_workdir/mesa-turnip/turnip-patches/*.patch; do
           echo "Applying patch $patch"
           git apply "$patch"
         done
@@ -75,7 +75,7 @@ jobs:
 
     - name: Build Mesa for Android ARM64
       run: |
-        cd turnip_workdir/mesa
+        cd turnip_arm64_workdir/mesa
         ndk="$PWD/../android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin"
         if [ ! -f "$ndk/aarch64-linux-android31-clang" ]; then
           echo "Compiler not found at $ndk/aarch64-linux-android31-clang" && exit 1
@@ -104,9 +104,9 @@ jobs:
 
     - name: Patchelf to Match Soname and Package ARM64
       run: |
-        cd turnip_workdir/mesa/build-android-aarch64/src/freedreno/vulkan
-        cp libvulkan_freedreno.so "$GITHUB_WORKSPACE/turnip_workdir"
-        cd "$GITHUB_WORKSPACE/turnip_workdir"
+        cd turnip_arm64_workdir/mesa/build-android-aarch64/src/freedreno/vulkan
+        cp libvulkan_freedreno.so "$GITHUB_WORKSPACE/turnip_arm64_workdir"
+        cd "$GITHUB_WORKSPACE/turnip_arm64_workdir"
         patchelf --set-soname vulkan.adreno.so libvulkan_freedreno.so
 
         # Create Debian package structure
@@ -151,25 +151,6 @@ jobs:
         # Build the package
         dpkg-deb --build turnip_${{ env.branch_version }}_arm64
 
-    - name: Create meta.json for ARM64
-      run: |
-        date=$(date +'%b %d, %Y')
-        cat <<EOF >"turnip_workdir/meta.json"
-        {
-          "schemaVersion": 1,
-          "name": "Turnip - $date - $commit_short",
-          "description": "Compiled from Mesa, Commit $commit_short",
-          "author": "mesa",
-          "packageVersion": "1",
-          "vendor": "Mesa",
-          "driverVersion": "$mesa_version/vk$vulkan_version",
-          "minApi": 27,
-          "libraryName": "libvulkan_freedreno.so"
-        }
-        EOF
-        mkdir -p turnip_${{ env.branch_version }}_arm64/usr/share/turnip
-        cp turnip_workdir/meta.json turnip_${{ env.branch_version }}_arm64/usr/share/turnip/
-
     - name: Upload a Build Artifact for ARM64
       uses: actions/upload-artifact@v3
       with:
@@ -202,12 +183,12 @@ jobs:
 
     - name: Create Work Directory
       run: |
-        mkdir -p turnip_workdir
-        cd turnip_workdir
+        mkdir -p turnip_armhf_workdir
+        cd turnip_armhf_workdir
 
     - name: Download and Extract Android NDK
       run: |
-        cd turnip_workdir
+        cd turnip_armhf_workdir
         ndkver="android-ndk-r26c"
         if [ ! -d "$ndkver" ]; then
           curl -LO https://dl.google.com/android/repository/"$ndkver"-linux.zip
@@ -216,12 +197,12 @@ jobs:
 
     - name: Clone Mesa Source
       run: |
-        cd turnip_workdir
+        cd turnip_armhf_workdir
         git clone --depth=1 --branch ${{ env.branch_version }} https://gitlab.freedesktop.org/mesa/mesa.git
 
     - name: Build Mesa for ARM (armhf)
       run: |
-        cd turnip_workdir/mesa
+        cd turnip_armhf_workdir/mesa
         ndk="$PWD/../android-ndk-r26c/toolchains/llvm/prebuilt/linux-x86_64/bin"
         if [ ! -f "$ndk/armv7a-linux-androideabi31-clang" ]; then
           echo "Compiler not found at $ndk/armv7a-linux-androideabi31-clang" && exit 1
@@ -250,9 +231,9 @@ jobs:
 
     - name: Patch ELF and Package
       run: |
-        cd turnip_workdir/mesa/build-android-armhf/src/freedreno/vulkan
-        cp libvulkan_freedreno.so "$GITHUB_WORKSPACE/turnip_workdir"
-        cd "$GITHUB_WORKSPACE/turnip_workdir"
+        cd turnip_armhf_workdir/mesa/build-android-armhf/src/freedreno/vulkan
+        cp libvulkan_freedreno.so "$GITHUB_WORKSPACE/turnip_armhf_workdir"
+        cd "$GITHUB_WORKSPACE/turnip_armhf_workdir"
         patchelf --set-soname vulkan.adreno.so libvulkan_freedreno.so
 
         # Create Debian package structure
@@ -297,28 +278,6 @@ jobs:
         # Build the package
         dpkg-deb --build turnip_${{ env.branch_version }}_armhf
 
-    - name: Create meta.json
-      run: |
-        commit_short=$(git -C turnip_workdir/mesa rev-parse --short HEAD)
-        mesa_version=$(grep -oP 'project_version\s*=\s*"\K[^"]+' turnip_workdir/mesa/meson.build)
-        vulkan_version=1.1.274
-        date=$(date +'%b %d, %Y')
-        cat <<EOF > "turnip_workdir/meta.json"
-        {
-          "schemaVersion": 1,
-          "name": "Turnip - $date - $commit_short",
-          "description": "Compiled from Mesa, Commit $commit_short",
-          "author": "mesa",
-          "packageVersion": "1",
-          "vendor": "Mesa",
-          "driverVersion": "$mesa_version/vk$vulkan_version",
-          "minApi": 27,
-          "libraryName": "libvulkan_freedreno.so"
-        }
-        EOF
-        mkdir -p turnip_${{ env.branch_version }}_armhf/usr/share/turnip
-        cp turnip_workdir/meta.json turnip_${{ env.branch_version }}_armhf/usr/share/turnip/
-
     - name: Upload Build Artifact
       uses: actions/upload-artifact@v3
       with:
@@ -335,8 +294,8 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: v${{ env.branch_version }}-release-$(date +%Y%m%d)
-        release_name: Turnip Release v${{ env.branch_version }}
+        tag_name: mesa_turnip_${{ env.branch_version }}
+        release_name: ubuntu turnip android ${{ env.branch_version }}-devel
         draft: false
         prerelease: true
 
@@ -346,7 +305,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: turnip_${{ env.branch_version }}_arm64.deb
+        asset_path: ${{ github.workspace }}/turnip_arm64_workdir/turnip_${{ env.branch_version }}_arm64.deb
         asset_name: turnip_${{ env.branch_version }}_arm64.deb
         asset_content_type: application/vnd.debian.binary-package
 
@@ -356,6 +315,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: turnip_${{ env.branch_version }}_armhf.deb
+        asset_path: ${{ github.workspace }}/turnip_armhf_workdir/turnip_${{ env.branch_version }}_armhf.deb
         asset_name: turnip_${{ env.branch_version }}_armhf.deb
         asset_content_type: application/vnd.debian.binary-package
