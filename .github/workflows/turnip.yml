@@ -180,8 +180,44 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout
+    - name: Checkout Code
       uses: actions/checkout@v4
+
+    - name: Prepare Environment
+      run: |
+        sudo sed -Ei 's/^# deb-src /deb-src /' /etc/apt/sources.list
+        sudo sed -i 's/^Types: deb$/Types: deb deb-src/g' /etc/apt/sources.list.d/*.sources
+        sudo apt update
+        sudo apt build-dep mesa -y
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y meson ninja-build patchelf unzip curl python3-pip flex bison zip git dpkg-dev debhelper
+
+    - name: Install or Upgrade Meson
+      run: |
+        python3 -m pip install --upgrade pip
+        python3 -m pip install --upgrade meson
+
+    - name: Create Work Directory
+      run: |
+        mkdir -p turnip_workdir
+        cd turnip_workdir
+
+    - name: Download and Extract Android NDK
+      run: |
+        cd turnip_workdir
+        ndkver="android-ndk-r26c"
+        if [ ! -d "$ndkver" ]; then
+          curl -LO https://dl.google.com/android/repository/"$ndkver"-linux.zip
+          unzip "$ndkver"-linux.zip
+        fi
+
+    - name: Clone Mesa Source
+      run: |
+        cd turnip_workdir
+        git clone --depth=1 --branch ${{ env.branch_version }} https://gitlab.freedesktop.org/mesa/mesa.git
 
     - name: Build Mesa for ARM (armhf)
       run: |
@@ -207,12 +243,12 @@ jobs:
         EOF
         mkdir -p build-android-armhf
         meson setup build-android-armhf --cross-file "$PWD/android-armhf" \
-            -Dbuildtype=release -Dplatforms=android -Dplatform-sdk-version=31 \
-            -Dandroid-stub=true -Dgallium-drivers= -Dvulkan-drivers=freedreno \
-            -Dvulkan-beta=true -Dfreedreno-kmds=kgsl -Db_lto=true
+          -Dbuildtype=release -Dplatforms=android -Dplatform-sdk-version=31 \
+          -Dandroid-stub=true -Dgallium-drivers= -Dvulkan-drivers=freedreno \
+          -Dvulkan-beta=true -Dfreedreno-kmds=kgsl -Db_lto=true
         ninja -C build-android-armhf
 
-    - name: Patchelf to Match Soname and Package
+    - name: Patch ELF and Package
       run: |
         cd turnip_workdir/mesa/build-android-armhf/src/freedreno/vulkan
         cp libvulkan_freedreno.so "$GITHUB_WORKSPACE/turnip_workdir"
@@ -263,8 +299,11 @@ jobs:
 
     - name: Create meta.json
       run: |
+        commit_short=$(git -C turnip_workdir/mesa rev-parse --short HEAD)
+        mesa_version=$(grep -oP 'project_version\s*=\s*"\K[^"]+' turnip_workdir/mesa/meson.build)
+        vulkan_version=1.1.274
         date=$(date +'%b %d, %Y')
-        cat <<EOF >"turnip_workdir/meta.json"
+        cat <<EOF > "turnip_workdir/meta.json"
         {
           "schemaVersion": 1,
           "name": "Turnip - $date - $commit_short",
@@ -280,7 +319,7 @@ jobs:
         mkdir -p turnip_${{ env.branch_version }}_armhf/usr/share/turnip
         cp turnip_workdir/meta.json turnip_${{ env.branch_version }}_armhf/usr/share/turnip/
 
-    - name: Upload a Build Artifact for ARMHF
+    - name: Upload Build Artifact
       uses: actions/upload-artifact@v3
       with:
         name: turnip-armhf-deb
