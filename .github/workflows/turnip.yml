@@ -151,12 +151,6 @@ jobs:
         # Build the package
         dpkg-deb --build turnip_${{ env.branch_version }}_arm64
 
-    - name: Upload a Build Artifact for ARM64
-      uses: actions/upload-artifact@v3
-      with:
-        name: turnip-arm64-deb
-        path: turnip_${{ env.branch_version }}_arm64.deb
-
     - name: Upload ARM64 Artifact to Release
       uses: softprops/action-gh-release@v2
       with:
@@ -287,12 +281,6 @@ jobs:
 
         # Build the package
         dpkg-deb --build turnip_${{ env.branch_version }}_armhf
-
-    - name: Upload Build Artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: turnip-armhf-deb
-        path: turnip_${{ env.branch_version }}_armhf.deb
 
     - name: Upload ARMHF Artifact to Release
       uses: softprops/action-gh-release@v2
